@@ -7,7 +7,9 @@ A complete Kubernetes deployment for the Kong Event Gateway (KEG) proxying an Ap
 This repository provides Kubernetes-ready manifests for deploying Kong Event Gateway as a secure, multi-tenant Kafka gateway. KEG acts as a proxy layer between Kafka clients and Kafka clusters, enabling virtualization, tenant aware routing, TLS termination, authentication mediation, and advanced topic management capabilities.
 
 The Kafka cluster is managed by the Strimzi Operator and is configured with KRaft mode.
-Data is produced in real-time by Kafka Connect. A Kafka UI viewable in your browser (`http://localhost:80`) is automatically deployed and configured to connect to the Kafka cluster. External access is mediated by the Kong Ingress Controller. Configuration for the kafkactl CLI tool is provided for easy access to the Kafka cluster, but you can also use an external client of your choice.
+Data is produced in real-time by Kafka Connect. A Kafka UI viewable in your browser (http://localhost:80) is automatically deployed and configured to connect to the Kafka cluster. External access is mediated by the Kong Ingress Controller. Configuration for the kafkactl CLI tool is provided for easy access to the Kafka cluster, but you can also use an external client of your choice.
+
+Observability is provided through OpenTelemetry, with traces exported to Jaeger and metrics to Prometheus. Both Jaeger (http://localhost/jaeger) and Prometheus (http://localhost/prometheus) UIs are accessible via HTTPRoutes through the Kong Ingress Controller.
 
 All external access (including accessing the Kafka UI) requires utilizing the deployed loadbalancer service. Cloud deployments may require additional configuration to route traffic to the loadbalancer service. Local deployments will depend on the type of k8s cluster but tools like `minikube` can utilize `sudo minikube tunnel -p <your-profile-name>` to expose the loadbalancer service.
 
@@ -16,10 +18,60 @@ All external access (including accessing the Kafka UI) requires utilizing the de
 - Kubernetes cluster (1.24+)
 - kubectl configured
 - helm installed
-- [Gateway API experimental](https://gateway-api.sigs.k8s.io/) installed in cluster
+- Terraform installed (required for Kong Event Gateway configuration in Konnect)
+- [Gateway API experimental](https://gateway-api.sigs.k8s.io/) v1.3.0 installed in cluster
   ```bash
   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/experimental-install.yaml
   ```
+- cert-manager (will be installed in step 2)
+- Strimzi Kafka Operator (will be installed in step 3)
+- Kong Konnect account with API token (required for Terraform setup)
+- For minikube users: minikube installed and configured
+
+> **⚠️ Warning for Minikube Users**: If leave your minikube cluster running while your computer sleeps, over time your system clock may get out of sync and you may experience issues with certificate validation and service connectivity. A simple restart of minikube (`minikube stop && minikube start`) typically resolves these issues.
+
+## 🖥️ Minikube-Specific Setup (Optional)
+
+If you're using minikube for local development, consider the following additional setup:
+
+### Enable Metrics Server
+
+The metrics server addon is useful for resource monitoring and autoscaling features:
+
+```bash
+minikube addons enable metrics-server
+```
+
+### Resource Considerations
+
+Ensure your minikube cluster has sufficient resources allocated. The deployment requires approximately:
+
+- **CPU**: ~3.2 cores (requests) / ~5.8 cores (limits)
+- **Memory**: ~8GB (requests) / ~12GB (limits)
+
+You can configure these when starting minikube:
+
+```bash
+minikube start --cpus=6 --memory=12g
+```
+
+Or adjust an existing cluster:
+
+```bash
+minikube stop
+minikube start --cpus=6 --memory=12g
+```
+
+### LoadBalancer Access
+
+For minikube, use `minikube tunnel` to expose LoadBalancer services:
+
+```bash
+# Run in a separate terminal (requires sudo)
+sudo minikube tunnel -p <your-profile-name>
+```
+
+This allows external access to services via the LoadBalancer IP.
 
 ## 💻 Resource Requirements
 
@@ -27,72 +79,145 @@ This deployment includes multiple components that require adequate cluster resou
 
 ### Cluster Requirements
 
-- **Total CPU**: ~4.5 cores
-- **Total Memory**: ~8GB
+- **Total CPU**: ~3.2 cores (requests) / ~5.8 cores (limits)
+- **Total Memory**: ~8GB (requests) / ~12GB (limits)
 - **Storage**: Ephemeral storage for Kafka brokers (persistent storage recommended for production)
 
 ### Component Resource Breakdown
 
-| Component                         | CPU Request | CPU Limit | Memory Request | Memory Limit | Replicas |
-| --------------------------------- | ----------- | --------- | -------------- | ------------ | -------- |
-| **Kafka Brokers**                 | 750m        | 1.2 cores | 2.3GB          | 3GB          | 3        |
-| **KEG Gateway**                   | 500m        | 750m      | 512MB          | 1GB          | 1        |
-| **Kafka Connect (Operations)**    | 250m        | 400m      | 768MB          | 1GB          | 1        |
-| **Kafka Connect (Analytics)**     | 250m        | 400m      | 768MB          | 1GB          | 1        |
-| **Kafka UI**                      | 200m        | 300m      | 768MB          | 1GB          | 1        |
-| **KIC (Kong Ingress Controller)** | ~200m       | ~500m     | ~256MB         | ~512MB       | 1        |
-| **Strimzi Operators**             | ~100m       | ~200m     | ~256MB         | ~512MB       | 1        |
+| Component                      | CPU Request | CPU Limit | Memory Request | Memory Limit | Replicas |
+| ------------------------------ | ----------- | --------- | -------------- | ------------ | -------- |
+| **Kafka Brokers**              | 750m        | 1.2 cores | 2.3GB          | 3GB          | 3        |
+| **KEG Gateway**                | 500m        | 750m      | 512MB          | 1GB          | 1        |
+| **Kafka Connect (Operations)** | 250m        | 400m      | 768MB          | 1GB          | 1        |
+| **Kafka Connect (Analytics)**  | 250m        | 400m      | 768MB          | 1GB          | 1        |
+| **Kafka UI**                   | 200m        | 300m      | 768MB          | 1GB          | 1        |
+| **OpenTelemetry Collector**    | 200m        | 500m      | 384Mi          | 512Mi        | 1        |
+| **Jaeger**                     | 200m        | 500m      | 1Gi            | 2Gi          | 1        |
+| **Prometheus**                 | 200m        | 500m      | 512MB          | 1GB          | 1        |
+| **KIC Controller**             | 100m        | 250m      | 256Mi          | 512Mi        | 1        |
+| **KIC Gateway**                | 500m        | 1000m     | 512Mi          | 1.5Gi        | 1        |
+| **Strimzi Operators**          | 100m        | 400m      | 256Mi          | 512Mi        | 1        |
 
 > **Note**: These are minimum requirements for a functional deployment. Production environments should allocate additional resources for performance, monitoring, and high availability.
 
 ### 1. Create Namespaces
 
 ```bash
-kubectl create namespace kafka && kubectl create namespace keg && kubectl create namespace kafka-ui && kubectl create namespace kic
+kubectl create namespace kafka && kubectl create namespace keg && kubectl create namespace kafka-ui && kubectl create namespace kic && kubectl create namespace observability
 ```
 
 ### 2. Setup TLS Certificates
 
-```bash
-# Install cert-manager in the clusterif not already installed
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.18.2/cert-manager.yaml
+1. Install cert-manager in the cluster if not already installed
 
-# Create CA cert and CA issuer
-kubectl apply -f certificates/ca-bootstrap.yaml -n cert-manager
+   ```bash
+   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.18.2/cert-manager.yaml
+   ```
 
-# Deploy certificate resources for cluster
-kubectl apply -f certificates/cluster-certificates.yaml
-```
+2. Create CA cert and CA issuer
+
+   ```bash
+   kubectl apply -f certificates/ca-bootstrap.yaml -n cert-manager
+   ```
+
+3. Deploy certificate resources for cluster
+   ```bash
+   kubectl apply -f certificates/cluster-certificates.yaml
+   ```
 
 ### 3. Deploy Kafka Cluster
 
-```bash
-# Install strimzi in the kafka namespace. The version must be locked to match the Kafka cluster version.
-curl -L https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.47.0/strimzi-cluster-operator-0.47.0.yaml \
-  | sed 's/namespace: .*/namespace: kafka/' \
-  | kubectl apply -f - -n kafka
+1. Install strimzi in the kafka namespace. The version must be locked to match the Kafka cluster version.
 
-# Deploy core Kafka cluster resources
-kubectl apply -f kafka/kafka-cluster/ -n kafka
-```
+   ```bash
+   curl -L https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.47.0/strimzi-cluster-operator-0.47.0.yaml \
+     | sed 's/namespace: .*/namespace: kafka/' \
+     | kubectl apply -f - -n kafka
+   ```
 
-### 4. Deploy KEG
+2. Deploy core Kafka cluster resources
+   ```bash
+   kubectl apply -f kafka/kafka-cluster/ -n kafka
+   ```
 
-```bash
-# Create Konnect secret specific to your KEG control plane. These values can be found in the Kong Konnect console when deploying a KEG dataplane
-kubectl create secret generic konnect-env-secret \
-  --from-literal=KONNECT_REGION=<your-region> \
-  --from-literal=KONNECT_DOMAIN=konghq.com \
-  --from-literal=KONNECT_GATEWAY_CLUSTER_ID=<control-plane-id> \
-  --from-literal=KONNECT_CLIENT_CERT=<full-client-certificate> \
-  --from-literal=KONNECT_CLIENT_KEY=<full-client-key> \
-  -n keg
+### 4. Configure Kong Event Gateway with Terraform
 
-# Deploy KEG components and setup services and namespaces for the virtual clusters
-kubectl apply -f keg/
-```
+This step configures the Kong Event Gateway in Konnect, including the backend cluster, virtual clusters, listeners, and policies. This should be completed before deploying KEG (step 5).
 
-### 5. Configure Kong Ingress Controller (KIC) with TLSRoute support
+**Prerequisites:**
+
+- Terraform installed ([installation instructions](https://developer.hashicorp.com/terraform/downloads))
+- Kong Konnect personal access token (create one in the Konnect console)
+
+**Setup Terraform configuration:**
+
+1. Copy the example variables file
+
+   ```bash
+   cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+   ```
+
+2. Set the required variables
+
+   ```yaml
+   # - konnect_token: Your Kong Konnect API token
+   # - konnect_server_url: Your Konnect region URL (default: https://us.api.konghq.com)
+   ```
+
+   _Optionally, set the following variable via TF_VAR_konnect_token environment variable._
+
+   ```bash
+   export TF_VAR_konnect_token="your-konnect-api-token-here"
+   ```
+
+**Initialize and apply Terraform:**
+
+1. Initialize Terraform (downloads providers)
+
+   ```bash
+   terraform -chdir=terraform init
+   ```
+
+2. Review the planned changes
+
+   ```bash
+   terraform -chdir=terraform plan
+   ```
+
+3. Apply the configuration (creates resources in Konnect)
+   ```bash
+   terraform -chdir=terraform apply
+   ```
+
+After successful application, Terraform will create:
+
+- Event Gateway in Konnect
+- Backend cluster configuration
+- Three virtual clusters (Operations-Team, Analytics-Team, External-Partners)
+- Internal and external listeners with TLS policies
+- Encryption, schema validation, and record skipping policies
+
+### 5. Deploy KEG
+
+1. Create Konnect secret specific to your KEG control plane.
+
+   ```bash
+   kubectl create secret generic konnect-env-secret \
+     --from-literal=KONNECT_REGION=$(terraform -chdir=terraform output -raw konnect_region) \
+     --from-literal=KONNECT_DOMAIN=konghq.com \
+     --from-literal=KONNECT_GATEWAY_CLUSTER_ID=$(terraform -chdir=terraform output -raw konnect_gateway_cluster_id) \
+     --from-file=KONNECT_CLIENT_CERT=./terraform/certs/tls.crt \
+     --from-file=KONNECT_CLIENT_KEY=./terraform/certs/key.crt \
+     -n keg
+   ```
+
+2. Deploy KEG components and setup services and namespaces for the virtual clusters
+   ```bash
+   kubectl apply -f keg/
+   ```
+
+### 6. Configure Kong Ingress Controller (KIC) with TLSRoute support
 
 ```bash
 # Create Konnect client certificate and config secrets specific to your KIC control plane. These values can be found in the Kong Konnect console when deploying a KIC dataplane.
@@ -120,26 +245,252 @@ helm install kong kong/ingress -n kic \
 kubectl apply -f kic/kic-gateway.yaml
 ```
 
-### 6. Deploy Kafka Connect
+#### Configuring SNI Routing for Cloud Deployments
+
+The default configuration uses `127-0-0-1.sslip.io` which works for local/minikube deployments. For cloud deployments with a real LoadBalancer IP, you need to update the SNI hostnames in two places:
+
+**Step 1: Get your LoadBalancer IP**
 
 ```bash
-# Deploy Kafka Connect clusters
-kubectl apply -f kafka/kafka-connect/kafka-connect-operations.yaml -f kafka/kafka-connect/kafka-connect-analytics.yaml
-
-# Deploy Kafka Connect connectors
-kubectl apply -f kafka/kafka-connect/connectors/
+kubectl get svc kong-gateway-proxy -n kic -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 ```
 
-### 7. Deploy Kafka UI
+Example output: `35.123.45.67`
+
+**Step 2: Update TLSRoute hostnames in `kic/kic-gateway.yaml`**
+
+Replace `127-0-0-1` with your LoadBalancer IP using dashes instead of dots:
+
+```yaml
+# Example: If LoadBalancer IP is 35.123.45.67
+# Change from:
+hostnames:
+  - "bootstrap.operations.127-0-0-1.sslip.io"
+# Change to:
+hostnames:
+  - "bootstrap.operations.35-123-45-67.sslip.io"
+```
+
+Update all four TLSRoutes (operations, analytics, partners, and direct-backend) with the new IP format.
+
+**Step 3: Update Terraform SNI suffix in `terraform/event_gateway.tf`**
+
+Find the `external_listener_policy_forward_to_virtual_cluster` resource and update the `sni_suffix`:
+
+```hcl
+# Change from:
+sni_suffix = ".127-0-0-1.sslip.io"
+# Change to:
+sni_suffix = ".35-123-45-67.sslip.io"
+```
+
+**Step 4: Apply the changes**
+
+```bash
+# Re-apply Terraform configuration
+terraform -chdir=terraform apply
+
+# Re-apply KIC Gateway configuration
+kubectl apply -f kic/kic-gateway.yaml
+
+# Restart KEG to pick up new configuration
+kubectl rollout restart deployment/keg -n keg
+```
+
+> **Note:** The [sslip.io](https://sslip.io) service automatically resolves hostnames like `35-123-45-67.sslip.io` to `35.123.45.67`, eliminating the need for DNS configuration.
+
+### 7. Deploy Kafka Connect
+
+1. Deploy Kafka Connect clusters
+
+   ```bash
+   kubectl apply -f kafka/kafka-connect/kafka-connect-operations.yaml -f kafka/kafka-connect/kafka-connect-analytics.yaml
+   ```
+
+2. Deploy Kafka Connect connectors
+   ```bash
+   kubectl apply -f kafka/kafka-connect/connectors/
+   ```
+
+### 8. Deploy Kafka UI
 
 ```bash
 # Deploy Kafka UI
 kubectl apply -f kafka-ui/
 ```
 
-### 8. Ensure loadbalancer service is accessible
+### 9. Deploy Observability Stack
+
+1. Deploy observability components (Jaeger, Prometheus, OpenTelemetry Collector)
+
+   > Note: Deploy Jaeger first as the OTEL collector references it
+   > All observability components are deployed in the observability namespace
+
+   ```bash
+   kubectl apply -f observability/jaeger.yaml
+   kubectl apply -f observability/prometheus.yaml
+   kubectl apply -f observability/otel-collector.yaml
+   ```
+
+2. Deploy HTTPRoutes for accessing observability UIs
+   ```bash
+   kubectl apply -f observability/jaeger-httproute.yaml
+   kubectl apply -f observability/prometheus-httproute.yaml
+   ```
+
+The observability stack provides:
+
+- **Jaeger**: Distributed tracing UI accessible at `http://<loadbalancer-ip>/jaeger`
+- **Prometheus**: Metrics querying UI accessible at `http://<loadbalancer-ip>/prometheus`
+- **OpenTelemetry Collector**: Receives traces and metrics from Event Gateway and forwards them to Jaeger and Prometheus
+
+The Event Gateway is configured with OpenTelemetry tracing enabled and exports:
+
+- **Traces**: Sent via OTLP/gRPC to the OpenTelemetry Collector, which forwards to Jaeger
+- **Metrics**: Exposed on the health listener (port 8080) and scraped by the OpenTelemetry Collector, which forwards to Prometheus
+
+Key metrics available include:
+
+- `kong_keg_kafka_connections_active`: Active Kafka connections
+- `kong_keg_kafka_backend_roundtrip_duration_seconds`: Backend roundtrip duration
+- `kong_keg_kafka_request_received_count_total`: Total API requests received
+
+The `OTEL_SERVICE_NAME` environment variable (set to `keg`) identifies the service name in traces and metrics, making it easier to filter and identify Event Gateway data in observability tools.
+
+### 10. Ensure loadbalancer service is accessible
 
 If running locally, ensure the loadbalancer service is accessible. Cloud deployments may require additional configuration to route traffic to the loadbalancer service. Local deployments will depend on the type of k8s cluster but tools like `minikube` can utilize `sudo minikube tunnel -p <your-profile-name>` to expose the loadbalancer service.
+
+## 🔗 Accessing the Demo Environment
+
+Once deployed, ensure your LoadBalancer service is accessible:
+
+**For minikube, you must first run the following command to expose the loadbalancer service:**
+
+```bash
+# Run in a separate terminal (requires sudo)
+sudo minikube tunnel -p <your-profile-name>
+```
+
+**Verify LoadBalancer IP:**
+
+```bash
+kubectl get svc kong-gateway-proxy -n kic -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+```
+
+> **Note**: For minikube, the LoadBalancer IP will be `127.0.0.1`. Cloud deployments will show their external IP address.
+
+### Links to Available Services
+
+| Service          | URL/Filename                          | Description                                                                                                           |
+| ---------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Kafka UI** ⭐  | `http://<loadbalancer-ip>`            | **Primary interface** for accessing Kafka clusters, viewing topics, producing/consuming messages                      |
+| **Jaeger**       | `http://<loadbalancer-ip>/jaeger`     | Distributed tracing UI for viewing request traces through the Event Gateway                                           |
+| **Prometheus**   | `http://<loadbalancer-ip>/prometheus` | Metrics querying and visualization UI for Event Gateway and Kafka metrics                                             |
+| **kafkactl CLI** | [`.kafkactl.yml`](.kafkactl.yml)      | Configuration for external CLI access. See [Accessing Kafka via CLI](#accessing-kafka-via-cli) below for more details |
+
+> **Note**: Replace `<loadbalancer-ip>` with your actual loadbalancer IP address. For local deployments using `localhost`, ensure the loadbalancer service is properly exposed (e.g., using `minikube tunnel`).
+
+### Accessing Kafka Through the Web UI
+
+The **Kafka UI** provides a user-friendly web interface for interacting with your Kafka clusters.
+
+**Access the UI:**
+
+- Navigate to `http://localhost` (minikube) or `http://<loadbalancer-ip>`
+
+**Features:**
+
+- 📊 View and manage topics across all virtual clusters
+- 📝 Produce and consume messages interactively
+- 🔍 Browse consumer groups and monitor lag
+- ⚙️ View broker configurations and cluster health
+
+The Kafka UI is pre-configured to connect to all three virtual clusters (operations, analytics, partners) through the Event Gateway.
+
+### Accessing Kafka via CLI
+
+For programmatic access or automation, use the `kafkactl` CLI tool with the provided [`.kafkactl.yml`](.kafkactl.yml) configuration.
+
+#### For Minikube (Local Development)
+
+The default configuration uses `127-0-0-1.sslip.io` which works out-of-the-box:
+
+```bash
+# Test connection
+kafkactl get topics --context operations
+```
+
+#### For Cloud or Remote Kubernetes Clusters
+
+**Option 1: Using sslip.io (Recommended)**
+
+1. **Get your LoadBalancer external IP:**
+
+```bash
+   kubectl get svc kong-gateway-proxy -n kic -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+```
+
+Example output: `35.123.45.67`
+
+2. **Update `.kafkactl.yml`** - Replace `127-0-0-1` with your LoadBalancer IP (using dashes):
+
+```yaml
+# Example: If LoadBalancer IP is 35.123.45.67
+operations:
+  brokers:
+    - bootstrap.operations.35-123-45-67.sslip.io:9094
+
+analytics:
+  brokers:
+    - bootstrap.analytics.35-123-45-67.sslip.io:9094
+
+partners:
+  brokers:
+    - bootstrap.partners.35-123-45-67.sslip.io:9094
+```
+
+3. **Test the connection:**
+
+```bash
+   kafkactl get topics --context operations
+```
+
+**How it works:** The [sslip.io](https://sslip.io) service automatically resolves hostnames like `35-123-45-67.sslip.io` to `35.123.45.67`. The subdomain prefix (e.g., `bootstrap.operations`) is used by Kong for SNI-based routing to the correct virtual cluster. No DNS configuration is required.
+
+**Option 2: Using Your Own Domain**
+
+If you have your own domain and DNS:
+
+1. **Create DNS A records** pointing to your LoadBalancer IP:
+
+```
+   bootstrap.operations.kafka.yourdomain.com  →  35.123.45.67
+   bootstrap.analytics.kafka.yourdomain.com   →  35.123.45.67
+   bootstrap.partners.kafka.yourdomain.com    →  35.123.45.67
+```
+
+2. **Update `.kafkactl.yml`** with your custom hostnames:
+
+```yaml
+operations:
+  brokers:
+    - bootstrap.operations.kafka.yourdomain.com:9094
+
+analytics:
+  brokers:
+    - bootstrap.analytics.kafka.yourdomain.com:9094
+
+partners:
+  brokers:
+    - bootstrap.partners.kafka.yourdomain.com:9094
+```
+
+> **Note**: The hostname prefixes (e.g., `bootstrap.operations`, `bootstrap.analytics`, `bootstrap.partners`) must be preserved as they are used for SNI routing by the Kong Event Gateway to direct traffic to the appropriate virtual cluster.
+
+### Using Other Kafka Clients
+
+You can use any Kafka-compatible client with the same broker addresses and TLS settings as defined in `.kafkactl.yml`.
 
 ## 🏗️ Architecture
 
@@ -162,6 +513,92 @@ If running locally, ensure the loadbalancer service is accessible. Cloud deploym
 2. **Kong Ingress Controller**: Routes TLS traffic based on SNI to KEG service
 3. **KEG**: Terminates TLS, applies topic prefixing, forwards to Kafka
 4. **Kafka Cluster**: Processes requests with prefixed topics (`<virtual-cluster-prefix>-<topic-name>`)
+
+## Troubleshooting
+
+### Direct Backend Kafka Access (Bypassing KEG)
+
+For troubleshooting, you can access the backend Kafka cluster directly without going through KEG using Kubernetes port-forwarding. This helps isolate whether issues are with KEG or the backend Kafka cluster.
+
+**Step 1: Start port-forwarding (in a separate terminal):**
+
+```bash
+kubectl port-forward svc/backend-cluster-kafka-bootstrap 9092:9092 -n kafka
+```
+
+**Step 2: Use kafkactl to connect:**
+
+The `.kafkactl.yml` file already has a `kafka-direct` context configured for this:
+
+```bash
+kafkactl get topics --context kafka-direct
+```
+
+**What you'll see:**
+- Backend topic names **with prefixes** (e.g., `operations-vehicle-gps`, `analytics-fleet-telemetry`, `partners-delivery-updates`)
+- This confirms KEG's topic prefixing is working correctly
+- You can produce/consume directly to verify backend Kafka functionality
+
+**Example commands:**
+
+```bash
+# List all backend topics (with prefixes)
+kafkactl get topics --context kafka-direct
+
+# Consume from a prefixed topic
+kafkactl consume operations-vehicle-gps --context kafka-direct
+
+# Produce to a prefixed topic
+echo "test message" | kafkactl produce operations-vehicle-gps --context kafka-direct
+```
+
+### Jaeger Pod Issues
+
+**Symptom:** Jaeger pod stuck in `Pending` state or PVC fails to bind
+
+**Cause:** Storage class incompatibility with your cluster's node type.
+
+When you don't specify a `storageClassName`, Kubernetes automatically uses the cluster's default storage class. In most cases, the default storage class works fine with standard node types. However, in rare cases with specialized machine types (e.g., GKE's c4 compute-optimized instances), the default storage class may be incompatible.
+
+**Solution:**
+
+1. **Check your cluster's available storage classes:**
+
+```bash
+kubectl get storageclass
+```
+
+Look for the one marked `(default)` and verify if it's compatible with your node types.
+
+2. **If needed, set a compatible storage class** in `observability/jaeger.yaml`:
+
+Find the PersistentVolumeClaim section and uncomment/set the `storageClassName` line:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jaeger-badger-pvc
+  namespace: observability
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard # ← Uncomment and set to a compatible storage class
+```
+
+Replace `standard` with the appropriate storage class name for your platform.
+
+3. **Apply the changes:**
+
+```bash
+kubectl delete pvc jaeger-badger-pvc -n observability
+kubectl apply -f observability/jaeger.yaml
+```
+
+> **Tip:** Consult your cloud provider's documentation to find compatible storage classes for your specific node/machine types. Most standard machine types work fine with the cluster default.
 
 ## Internal Notes
 

@@ -41,8 +41,9 @@ contexts:
     requestTimeout: 10s
     retryBackoff: 100ms
 
-  # Direct Kafka cluster access (for admin operations)
-  # Requires port-forwarding: kubectl port-forward svc/my-cluster-kafka-bootstrap 9092:9092 -n kafka
+  # Direct backend Kafka access (bypasses KEG - for troubleshooting)
+  # Requires port-forwarding: kubectl port-forward svc/backend-cluster-kafka-bootstrap 9092:9092 -n kafka
+  # Shows actual backend topic names with prefixes (operations-, analytics-, partners-)
   kafka-direct:
     brokers:
       - localhost:9092
@@ -50,7 +51,7 @@ contexts:
       enabled: false
     sasl:
       enabled: false
-    clientID: kafkactl-admin
+    clientID: kafkactl-direct
     requestTimeout: 10s
     retryBackoff: 100ms
 
