@@ -13,3 +13,11 @@
 
 # Secrets
 *-secret.yaml
+
+# Local-only (personal shell history, agent state)
+command-history.txt
+.remember/
+.claude/
+.env
+*.pem
+secrets.env
