@@ -1,10 +1,11 @@
 resource "konnect_event_gateway" "event_gateway_terraform" {
-  provider = konnect-beta
-  name     = "event_gateway_tf_test"
+  name = var.event_gateway_name
+  # Unlocks policy fields that need newer data planes (failure_mode, validate_key, inline schemas, ...).
+  # Keep in step with the image tag in keg/keg-deployment.yaml.
+  min_runtime_version = var.keg_min_runtime_version
 }
 
 resource "konnect_event_gateway_backend_cluster" "backend_cluster" {
-  provider    = konnect-beta
   name        = "backend_cluster"
   description = "Strimzi managed 3 node Kafka cluster"
   gateway_id  = konnect_event_gateway.event_gateway_terraform.id
@@ -26,8 +27,7 @@ resource "konnect_event_gateway_backend_cluster" "backend_cluster" {
 }
 
 resource "konnect_event_gateway_virtual_cluster" "operations_team_vc" {
-  name     = "Operations-Team"
-  provider = konnect-beta
+  name     = "Operations Team"
   acl_mode = "passthrough"
   authentication = [
     {
@@ -61,8 +61,7 @@ resource "konnect_event_gateway_virtual_cluster" "operations_team_vc" {
 }
 
 resource "konnect_event_gateway_virtual_cluster" "analytics_team_vc" {
-  name     = "Analytics-Team"
-  provider = konnect-beta
+  name     = "Analytics Team"
   acl_mode = "passthrough"
   authentication = [
     {
@@ -85,8 +84,7 @@ resource "konnect_event_gateway_virtual_cluster" "analytics_team_vc" {
 }
 
 resource "konnect_event_gateway_virtual_cluster" "external_partners_vc" {
-  name     = "External-Partners"
-  provider = konnect-beta
+  name     = "External Partners"
   acl_mode = "passthrough"
   authentication = [
     {
@@ -121,7 +119,6 @@ resource "konnect_event_gateway_virtual_cluster" "external_partners_vc" {
 
 // Internal listener with policies set up for SNI
 resource "konnect_event_gateway_listener" "internal_listener" {
-  provider = konnect-beta
   addresses = [
     "0.0.0.0"
   ]
@@ -135,7 +132,6 @@ resource "konnect_event_gateway_listener" "internal_listener" {
   gateway_id = konnect_event_gateway.event_gateway_terraform.id
 }
 resource "konnect_event_gateway_listener_policy_tls_server" "my_eventgatewaylistenerpolicytlsserver" {
-  provider = konnect-beta
   config = {
     allow_plaintext = false
     certificates = [
@@ -152,13 +148,12 @@ resource "konnect_event_gateway_listener_policy_tls_server" "my_eventgatewaylist
   enabled = true
   labels = {
   }
-  name                      = "Internal TLS Server"
-  gateway_id                = konnect_event_gateway.event_gateway_terraform.id
-  event_gateway_listener_id = konnect_event_gateway_listener.internal_listener.id
+  name        = "Internal TLS Server"
+  gateway_id  = konnect_event_gateway.event_gateway_terraform.id
+  listener_id = konnect_event_gateway_listener.internal_listener.id
 }
 resource "konnect_event_gateway_listener_policy_forward_to_virtual_cluster" "internal_listener_policy_forward_to_virtual_cluster" {
-  provider = konnect-beta
-  name     = "Internal Listener Policy Forward to Virtual Cluster"
+  name = "Internal Listener Policy Forward to Virtual Cluster"
   config = {
     sni = {
       sni_suffix = ".svc.cluster.local"
@@ -167,8 +162,8 @@ resource "konnect_event_gateway_listener_policy_forward_to_virtual_cluster" "int
   enabled = true
   labels = {
   }
-  gateway_id                = konnect_event_gateway.event_gateway_terraform.id
-  event_gateway_listener_id = konnect_event_gateway_listener.internal_listener.id
+  gateway_id  = konnect_event_gateway.event_gateway_terraform.id
+  listener_id = konnect_event_gateway_listener.internal_listener.id
 }
 
 
@@ -176,7 +171,6 @@ resource "konnect_event_gateway_listener_policy_forward_to_virtual_cluster" "int
 
 // External listener with policies set up for SNI
 resource "konnect_event_gateway_listener" "external_listener" {
-  provider = konnect-beta
   addresses = [
     "0.0.0.0"
   ]
@@ -190,7 +184,6 @@ resource "konnect_event_gateway_listener" "external_listener" {
   gateway_id = konnect_event_gateway.event_gateway_terraform.id
 }
 resource "konnect_event_gateway_listener_policy_tls_server" "external_listener_policy_tls_server" {
-  provider = konnect-beta
   config = {
     allow_plaintext = false
     certificates = [
@@ -207,13 +200,12 @@ resource "konnect_event_gateway_listener_policy_tls_server" "external_listener_p
   enabled = true
   labels = {
   }
-  name                      = "External TLS Server"
-  gateway_id                = konnect_event_gateway.event_gateway_terraform.id
-  event_gateway_listener_id = konnect_event_gateway_listener.external_listener.id
+  name        = "External TLS Server"
+  gateway_id  = konnect_event_gateway.event_gateway_terraform.id
+  listener_id = konnect_event_gateway_listener.external_listener.id
 }
 resource "konnect_event_gateway_listener_policy_forward_to_virtual_cluster" "external_listener_policy_forward_to_virtual_cluster" {
-  provider = konnect-beta
-  name     = "External Listener Policy Forward to Virtual Cluster"
+  name = "External Listener Policy Forward to Virtual Cluster"
   config = {
     sni = {
       sni_suffix = ".127-0-0-1.sslip.io"
@@ -222,8 +214,8 @@ resource "konnect_event_gateway_listener_policy_forward_to_virtual_cluster" "ext
   enabled = true
   labels = {
   }
-  gateway_id                = konnect_event_gateway.event_gateway_terraform.id
-  event_gateway_listener_id = konnect_event_gateway_listener.external_listener.id
+  gateway_id  = konnect_event_gateway.event_gateway_terraform.id
+  listener_id = konnect_event_gateway_listener.external_listener.id
 }
 
 # Generate a 32-byte random key and encode it in base64
@@ -234,21 +226,21 @@ resource "random_bytes" "operations_gps_encryption_key" {
 
 # Resources for use in policies
 resource "konnect_event_gateway_static_key" "operations_gps_encryption_key" {
-  provider   = konnect-beta
-  name       = "operations-gps-key-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  name       = "operations-gps-key"
   gateway_id = konnect_event_gateway.event_gateway_terraform.id
   value      = random_bytes.operations_gps_encryption_key.base64
 
   lifecycle {
+    # A replaced key makes records already encrypted with the old key unreadable.
+    # Keep the name static (no timestamp()) so routine applies never rotate it.
     create_before_destroy = true
-    # TODO: Remove this and the timestamp in the name once we can update the key resource without a naming conflict
-    ignore_changes = [name]
+    # The API never returns the key value, so without this every plan would replace it.
+    ignore_changes = [value]
   }
 }
 
 # Operations VC Policies
 resource "konnect_event_gateway_produce_policy_encrypt" "operations_gps_encrypt" {
-  provider           = konnect-beta
   name               = "operations-gps-encrypt"
   description        = "Policy to encrypt operations GPS topic"
   gateway_id         = konnect_event_gateway.event_gateway_terraform.id
@@ -262,9 +254,7 @@ resource "konnect_event_gateway_produce_policy_encrypt" "operations_gps_encrypt"
     encryption_key = {
       static = {
         key = {
-          reference_by_id = {
-            id = konnect_event_gateway_static_key.operations_gps_encryption_key.id
-          }
+          id = konnect_event_gateway_static_key.operations_gps_encryption_key.id
         }
       }
     }
@@ -272,7 +262,6 @@ resource "konnect_event_gateway_produce_policy_encrypt" "operations_gps_encrypt"
 }
 
 resource "konnect_event_gateway_consume_policy_decrypt" "operations_gps_decrypt" {
-  provider           = konnect-beta
   name               = "operations-gps-decrypt"
   description        = "Policy to decrypt operations GPS topic"
   gateway_id         = konnect_event_gateway.event_gateway_terraform.id
@@ -292,7 +281,6 @@ resource "konnect_event_gateway_consume_policy_decrypt" "operations_gps_decrypt"
 
 # External Partners VC Policies
 resource "konnect_event_gateway_consume_policy_schema_validation" "external_partners_consume_schema_validation" {
-  provider           = konnect-beta
   name               = "external-partners-consume-schema-validation"
   description        = "Policy to validate schema on external partners topic"
   gateway_id         = konnect_event_gateway.event_gateway_terraform.id
@@ -301,14 +289,15 @@ resource "konnect_event_gateway_consume_policy_schema_validation" "external_part
   enabled   = true
   condition = "context.topic.name == 'delivery-updates'"
   config = {
-    key_validation_action   = "mark"
-    type                    = "json"
-    value_validation_action = "mark"
+    json = {
+      failure_mode   = "mark"
+      validate_key   = false # record keys are plain IDs (e.g. DEL-1234), not JSON
+      validate_value = true
+    }
   }
 }
 
 resource "konnect_event_gateway_consume_policy_skip_record" "my_eventgatewayconsumepolicyskiprecord" {
-  provider           = konnect-beta
   condition          = " record.value.content['partner'] != 'Amazon'"
   enabled            = true
   name               = "external-partners-consume-skip-record"

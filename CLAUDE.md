@@ -82,12 +82,20 @@ kubectl apply -f kafka-ui/
 3. **Kong Event Gateway (KEG)** → Terminates TLS, applies topic prefixing, proxies to Kafka
 4. **Kafka Cluster** → Processes requests with prefixed topics (`<prefix>-<topic-name>`)
 
+### Konnect side (Terraform, `terraform/`)
+
+- Event Gateway control plane **KEG-Demo** in the **AU** region (`https://au.api.konghq.com`), managed by Terraform with the GA `Kong/konnect` provider (~> 3.30). The pre-existing gateway was adopted with `import {}` blocks in the git-ignored `terraform/imports_local.tf`; state is local and git-ignored.
+- Defines: backend cluster, 3 virtual clusters (`acl_mode = passthrough`, `hide_prefix`), Internal (9092, SNI suffix `.svc.cluster.local`) and External (9094, SNI suffix `.127-0-0-1.sslip.io`) listeners with TLS server policies, the operations `vehicle-gps` encrypt/decrypt policies with a static key, and the partners `delivery-updates` schema-validation plus skip-record (Amazon only) policies.
+- `min_runtime_version` is set to `1.3` (`var.keg_min_runtime_version`). Keep it in step with the image tag in `keg/keg-deployment.yaml`.
+- KEG image `kong/kong-event-gateway:1.3.0`. Data-plane env vars must use the `KONG_KONNECT_*` prefix (mapped from the `KONNECT_*` keys in `konnect-env-secret`).
+- Run `tests/test-keg.sh` (25 checks) to verify every capability; use `HTTP_PORT=8080` with a port-forward instead of `minikube tunnel`.
+
 ### Virtual Clusters
 
 KEG provides three pre-configured virtual clusters with distinct topic prefixes:
 - **operations**: Prefix `operations-`, bootstrap at `bootstrap.operations.127-0-0-1.sslip.io:9094`
 - **analytics**: Prefix `analytics-`, bootstrap at `bootstrap.analytics.127-0-0-1.sslip.io:9094`
-- **partners**: Prefix `partner-`, bootstrap at `bootstrap.partners.127-0-0-1.sslip.io:9094`
+- **partners**: Prefix `partners-`, bootstrap at `bootstrap.partners.127-0-0-1.sslip.io:9094`
 
 Each virtual cluster has:
 - Dedicated namespace with ExternalName services (`bootstrap`, `broker-0/1/2`) pointing to KEG

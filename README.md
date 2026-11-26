@@ -162,7 +162,9 @@ This step configures the Kong Event Gateway in Konnect, including the backend cl
 
    ```yaml
    # - konnect_token: Your Kong Konnect API token
-   # - konnect_server_url: Your Konnect region URL (default: https://us.api.konghq.com)
+   # - konnect_server_url: Your Konnect region URL (default: https://us.api.konghq.com,
+   #   this demo runs in Australia: https://au.api.konghq.com)
+   # - event_gateway_name (default: KEG-Demo) and keg_min_runtime_version (default: 1.3)
    ```
 
    _Optionally, set the following variable via TF_VAR_konnect_token environment variable._
@@ -190,11 +192,31 @@ This step configures the Kong Event Gateway in Konnect, including the backend cl
    terraform -chdir=terraform apply
    ```
 
+> **Adopting an Event Gateway that already exists in Konnect** (for example `KEG-Demo`): Terraform would otherwise
+> create duplicates. Put `import {}` blocks for the gateway, the backend cluster and the three virtual clusters in
+> `terraform/imports_local.tf` (git-ignored, so control-plane IDs stay out of the repo) before running `plan`:
+>
+> ```hcl
+> import {
+>   to = konnect_event_gateway.event_gateway_terraform
+>   id = "<gateway-id>"
+> }
+> import {
+>   to = konnect_event_gateway_virtual_cluster.operations_team_vc
+>   id = jsonencode({ gateway_id = "<gateway-id>", id = "<virtual-cluster-id>" })
+> }
+> # ...same pattern for backend_cluster, analytics_team_vc, external_partners_vc
+> ```
+>
+> The configuration uses the GA `Kong/konnect` provider (3.30+). The gateway's `min_runtime_version` must be at
+> least `1.2` for policy fields such as `failure_mode`, `validate_key` and `validate_value`; Konnect rejects them
+> with HTTP 400 ("requires minimum runtime version") otherwise.
+
 After successful application, Terraform will create:
 
 - Event Gateway in Konnect
 - Backend cluster configuration
-- Three virtual clusters (Operations-Team, Analytics-Team, External-Partners)
+- Three virtual clusters (Operations Team, Analytics Team, External Partners)
 - Internal and external listeners with TLS policies
 - Encryption, schema validation, and record skipping policies
 
@@ -211,6 +233,9 @@ After successful application, Terraform will create:
      --from-file=KONNECT_CLIENT_KEY=./terraform/certs/key.crt \
      -n keg
    ```
+
+   > The secret keeps the `KONNECT_*` key names. KEG 1.1+ only reads `KONG_KONNECT_*` environment variables,
+   > so `keg/keg-deployment.yaml` maps each key explicitly; don't switch it back to `envFrom`.
 
 2. Deploy KEG components and setup services and namespaces for the virtual clusters
    ```bash
@@ -607,3 +632,30 @@ kubectl apply -f observability/jaeger.yaml
 - **Virtual Cluster Limitations**: When adding new virtual clusters, Kubernetes services are not automatically generated. See keg/keg-vc-broker-dns.yaml for current manual approach. This will need to be automated in the future with the Kong Operator.
   - External Kafka clients require updates to tlsroutes managed by KIC.
 - **Virtual Cluster Name Changes**: Changing virtual cluster names impacts DNS and certificates - use with caution. See certificates/cluster-certificates.yaml for current manual approach. This will need to be automated in the future with the Kong Operator.
+
+## Testing
+
+`tests/test-keg.sh` runs an end-to-end check of every capability: platform health, SNI routing for each virtual
+cluster, topic prefixing and tenant isolation, the shared `delivery-updates` topic, GPS encryption (plaintext for
+clients, `kong/enc` ciphertext on the backend), the partners skip-record and schema-validation policies, Kafka UI,
+Prometheus and Jaeger.
+
+```bash
+# With `sudo minikube tunnel -p <profile>` running:
+tests/test-keg.sh
+# Or without the tunnel:
+kubectl port-forward -n kic svc/kong-gateway-proxy 9094:9094 8080:80 &
+HTTP_PORT=8080 tests/test-keg.sh
+```
+
+## Upgrade notes (KEG 1.0 → 1.3)
+
+- **Konnect env prefix** (1.1): data planes only accept `KONG_KONNECT_*` (handled in `keg/keg-deployment.yaml`).
+- **Tracing config** (1.3): `KEG__OBSERVABILITY__OTLP__TRACING__ENABLED` is rejected; set
+  `KEG__OBSERVABILITY__OTEL__TRACES__{ENDPOINT,PROTOCOL,TIMEOUT}` instead. `docker run --rm kong/kong-event-gateway:1.3.0 specs --out-dir /out`
+  (with a volume mounted at `/out`) writes the bootstrap JSON schema plus the metrics and header references.
+- **Metrics** (1.1/1.3): names follow OTel conventions; `kong.keg.lifecycle.*` became `kong.dataplane.lifecycle.*`
+  (Prometheus: `kong_dataplane_lifecycle_*`). Old names are still emitted as deprecated aliases for now.
+- **Schema validation** (1.2): failures are reported in the `kong/policy-failure-<policy-id>` header; `kong/sverr-*` is deprecated.
+- **Kafka UI** is pinned to kafbat `v1.4.2`: v1.5+ calls `DescribeQuorum`, which KEG virtual clusters don't serve, so
+  they show as OFFLINE.

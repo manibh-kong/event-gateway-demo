@@ -24,28 +24,51 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: kong/kong-event-gateway:1.0.0
+          image: kong/kong-event-gateway:1.3.0
           imagePullPolicy: Always
           ports:
             - containerPort: 9092
             - containerPort: 9094
             - containerPort: 8080
-          envFrom:
-            - secretRef:
-                name: konnect-env-secret
           env:
+            # KEG 1.1+ only accepts the KONG_KONNECT_ prefix. Map them from the
+            # konnect-env-secret keys (KONNECT_*) so the secret format is unchanged.
+            - name: KONG_KONNECT_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: konnect-env-secret
+                  key: KONNECT_REGION
+            - name: KONG_KONNECT_DOMAIN
+              valueFrom:
+                secretKeyRef:
+                  name: konnect-env-secret
+                  key: KONNECT_DOMAIN
+            - name: KONG_KONNECT_GATEWAY_CLUSTER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: konnect-env-secret
+                  key: KONNECT_GATEWAY_CLUSTER_ID
+            - name: KONG_KONNECT_CLIENT_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: konnect-env-secret
+                  key: KONNECT_CLIENT_CERT
+            - name: KONG_KONNECT_CLIENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: konnect-env-secret
+                  key: KONNECT_CLIENT_KEY
             - name: KEG__OBSERVABILITY__LOG_FLAGS
               value: "info,keg=info"
             - name: KEG__RUNTIME__HEALTH_LISTENER_ADDRESS_PORT
               value: "0.0.0.0:8080"
-            # OpenTelemetry Tracing Configuration
-            - name: KEG__OBSERVABILITY__OTLP__TRACING__ENABLED
-              value: "true"
-            - name: OTEL_EXPORTER_OTLP_PROTOCOL
-              value: "grpc"
-            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            # OpenTelemetry tracing (KEG 1.3 bootstrap schema: observability.otel.traces).
+            # Setting the traces endpoint enables trace export.
+            - name: KEG__OBSERVABILITY__OTEL__TRACES__ENDPOINT
               value: "http://otel-collector.observability.svc.cluster.local:4317"
-            - name: OTEL_EXPORTER_OTLP_TIMEOUT
+            - name: KEG__OBSERVABILITY__OTEL__TRACES__PROTOCOL
+              value: "grpc"
+            - name: KEG__OBSERVABILITY__OTEL__TRACES__TIMEOUT
               value: "10s"
             - name: OTEL_SERVICE_NAME
               value: "keg"

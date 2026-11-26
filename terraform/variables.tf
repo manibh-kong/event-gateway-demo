@@ -54,3 +54,15 @@ variable "id_token_duration" {
 }
 
 
+
+variable "event_gateway_name" {
+  type        = string
+  description = "Name of the Event Gateway control plane created in Konnect"
+  default     = "KEG-Demo"
+}
+
+variable "keg_min_runtime_version" {
+  type        = string
+  description = "Lowest Event Gateway data plane version the control plane accepts (match keg/keg-deployment.yaml)"
+  default     = "1.3"
+}

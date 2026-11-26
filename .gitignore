@@ -57,3 +57,4 @@ ssh_key.pem
 *.pem
 *.key
 terraform/certs/
+terraform/imports_local.tf

@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: kafka-ui
-          image: ghcr.io/kafbat/kafka-ui:latest
+          image: ghcr.io/kafbat/kafka-ui:v1.4.2 # v1.5+ calls DescribeQuorum, which KEG virtual clusters do not serve
           ports:
             - containerPort: 8080
           env:
